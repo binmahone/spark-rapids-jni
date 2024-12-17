@@ -69,6 +69,7 @@ $DOCKER_CMD run $DOCKER_GPU_OPTS $DOCKER_RUN_EXTRA_ARGS -u $(id -u):$(id -g) --r
   -v "$WORKDIR:$WORKDIR:rw" \
   -v "$LOCAL_CCACHE_DIR:$LOCAL_CCACHE_DIR:rw" \
   -v "$LOCAL_MAVEN_REPO:$LOCAL_MAVEN_REPO:rw" \
+  -v /home/hongbin/develop/jemalloc-5.3.0:/home/hongbin/develop/jemalloc-5.3.0 \
   --workdir "$WORKDIR" \
   -e CCACHE_DIR="$LOCAL_CCACHE_DIR" \
   -e CMAKE_C_COMPILER_LAUNCHER="ccache" \

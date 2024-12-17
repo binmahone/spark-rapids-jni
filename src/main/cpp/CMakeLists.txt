@@ -101,7 +101,7 @@ set(CMAKE_PREFIX_PATH ${CUDF_INSTALL_DIR})
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules/")
 
 # Set a default build type if none was specified
-rapids_cmake_build_type("Release")
+rapids_cmake_build_type("Debug")
 
 # ##################################################################################################
 # * compiler options ------------------------------------------------------------------------------
@@ -156,12 +156,12 @@ find_library(CUDFJNI_LIB "libcudfjni.a" REQUIRED NO_DEFAULT_PATH
 
 # arrow
 find_library(ARROW_LIB "libarrow.a" REQUIRED NO_DEFAULT_PATH
-  HINTS "${CUDFJNI_BUILD_DIR}/_deps/arrow-build/release/"
+  HINTS "${CUDFJNI_BUILD_DIR}/_deps/arrow-build/debug/"
 )
 
 # parquet
 find_library(PARQUET_LIB "libparquet.a" REQUIRED NO_DEFAULT_PATH
-  HINTS "${CUDFJNI_BUILD_DIR}/_deps/arrow-build/release/"
+  HINTS "${CUDFJNI_BUILD_DIR}/_deps/arrow-build/debug/"
 )
 
 # Internal parquet headers
