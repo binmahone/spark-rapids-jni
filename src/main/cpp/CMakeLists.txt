@@ -18,10 +18,18 @@ set(CUDF_DIR
   "$ENV{CUDF_ROOT}"
   CACHE STRING "path to cudf repository"
 )
+message(STATUS "CUDF_DIRxxx")
+message(STATUS "CUDF_DIR: ${CUDF_DIR}")
 set(CUDF_INSTALL_DIR
   "$ENV{CUDF_INSTALL_DIR}"
   CACHE STRING "path to libcudf install root"
 )
+#set(CMAKE_PREFIX_PATH "${CUDF_INSTALL_DIR}")
+list(APPEND CMAKE_PREFIX_PATH  "${CUDF_INSTALL_DIR}")
+list(APPEND CMAKE_PREFIX_PATH  "/home/hongbin/code/spark-rapids-jni-2502-official/target/libcudf-install/lib64/cmake")
+list(APPEND CMAKE_PREFIX_PATH  "/home/hongbin/code/spark-rapids-jni-2502-official/target/libcudf-install/lib64/")
+message(STATUS "CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
+
 set(CUDFJNI_BUILD_DIR
   "$ENV{CUDFJNI_BUILD_DIR}"
   CACHE STRING "path to libcudfjni build root"
@@ -97,7 +105,7 @@ set_property(
 )
 message(VERBOSE "SPARK_RAPIDS_JNI: RMM_LOGGING_LEVEL = '${RMM_LOGGING_LEVEL}'.")
 
-set(CMAKE_PREFIX_PATH ${CUDF_INSTALL_DIR})
+
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules/")
 
 # Set a default build type if none was specified

@@ -1608,7 +1608,11 @@ class spark_resource_adaptor final : public rmm::mr::device_memory_resource {
       }
     }
     // Now if all of the tasks are blocked, then we need to break a deadlock
-    return all_task_ids.size() == blocked_task_ids.size();
+    bool ret =  all_task_ids.size() == blocked_task_ids.size();
+    if (ret) {
+      logger->info("deadlock state is reached with all_task_ids size: {}", all_task_ids.size());
+    }
+    return ret;
   }
 
   /**
@@ -1668,6 +1672,7 @@ class spark_resource_adaptor final : public rmm::mr::device_memory_resource {
       bool const all_bufn = all_task_ids.size() == bufn_task_ids.size();
 
       if (all_bufn) {
+        logger->info("all_bufn stated is reached with all_task_ids size: {}", all_task_ids.size());
         thread_priority to_wake(-1, -1);
         bool is_to_wake_set = false;
         for (auto const& [thread_id, t_state] : threads) {
