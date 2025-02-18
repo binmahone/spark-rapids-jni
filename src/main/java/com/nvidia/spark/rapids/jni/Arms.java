@@ -19,6 +19,7 @@ package com.nvidia.spark.rapids.jni;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -94,6 +95,34 @@ public class Arms {
         C resource, Function<C, V> function) {
         try {
             return function.apply(resource);
+        } finally {
+            closeAll(resource);
+        }
+    }
+
+    /**
+     * This method safely closes the resources after applying the function.
+     * <br/>
+     * See {@link #closeAll} for more details.
+     */
+    public static <R extends AutoCloseable, V> V withResource(
+        R resource, Function<R, V> function) {
+        try {
+            return function.apply(resource);
+        } finally {
+            closeAll(resource);
+        }
+    }
+
+    /**
+     * This method safely closes the resources after applying the function.
+     * <br/>
+     * See {@link #closeAll} for more details.
+     */
+    public static <R extends AutoCloseable> void withResource(
+        R resource, Consumer<R> consumer) {
+        try {
+            consumer.accept(resource);
         } finally {
             closeAll(resource);
         }

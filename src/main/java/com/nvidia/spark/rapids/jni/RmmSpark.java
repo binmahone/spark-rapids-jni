@@ -22,6 +22,8 @@ import ai.rapids.cudf.RmmEventHandler;
 import ai.rapids.cudf.RmmEventHandlerResourceAdaptor;
 import ai.rapids.cudf.RmmException;
 import ai.rapids.cudf.RmmTrackingResourceAdaptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -30,6 +32,8 @@ import java.util.Map;
  * Initialize RMM in ways that are specific to Spark.
  */
 public class RmmSpark {
+
+  private static final Logger log = LoggerFactory.getLogger(RmmSpark.class);
 
   public enum OomInjectionType {
     CPU_OR_GPU,
@@ -119,7 +123,9 @@ public class RmmSpark {
    * Get the id of the current thread as used by RmmSpark.
    */
   public static long getCurrentThreadId() {
-    return SparkResourceAdaptor.getCurrentThreadId();
+    long temp = SparkResourceAdaptor.getCurrentThreadId();
+//    log.error("java thread id " + Thread.currentThread().getId() + " native thread id: " + temp);
+    return temp;
   }
 
   /**
