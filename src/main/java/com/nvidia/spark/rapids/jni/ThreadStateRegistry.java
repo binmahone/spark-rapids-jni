@@ -20,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
-import java.util.HashSet;
 
 /**
  * This is used to allow us to map a native thread id to a java thread so we can look at the
@@ -28,6 +27,8 @@ import java.util.HashSet;
  */
 class ThreadStateRegistry {
   private static final Logger LOG = LoggerFactory.getLogger(ThreadStateRegistry.class);
+  private static final boolean TIME_WAITING_NOT_AS_BLOCKED =
+      java.lang.Boolean.getBoolean("ai.rapids.oom.time_waiting_not_as_blocked");
 
   private static final HashMap<Long, Thread> knownThreads = new HashMap<>();
 
@@ -50,18 +51,25 @@ class ThreadStateRegistry {
     }
     Thread.State state = t.getState();
     switch (state) {
-      case BLOCKED:
-        // fall through
-      case WAITING:
-        // fall through
-      case TIMED_WAITING:
+    case BLOCKED:
+      // fall through
+    case WAITING:
+      // fall through
+      return true;
+    case TIMED_WAITING:
+      if (!TIME_WAITING_NOT_AS_BLOCKED) {
+        LOG.info("Thread {} is in TIMED_WAITING state, treating as BLOCKED, thread id: {}" +
+            ", native id: {}", t.getName(), Thread.currentThread().getId(), nativeId);
         return true;
-      case TERMINATED:
-        // Technically there is a race with `!t.isAlive` check above, and dead is as good as
-        // blocked.
-        return true;
-      default:
+      } else {
         return false;
+      }
+    case TERMINATED:
+      // Technically there is a race with `!t.isAlive` check above, and dead is as good as
+      // blocked.
+      return true;
+    default:
+      return false;
     }
   }
 }
