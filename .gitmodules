@@ -1,4 +1,4 @@
 [submodule "thirdparty/cudf"]
 	path = thirdparty/cudf
-	url = https://github.com/NVIDIA/cudf.git
-	branch = main
+	url = https://github.com/binmahone/cudf.git
+	branch = wild-rowgroup-api-260903
