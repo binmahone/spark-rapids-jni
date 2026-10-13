@@ -101,6 +101,7 @@ public final class KudoTableHeader {
   public long getValidityBufferLength() { return validityBufferLen; }
   public int getOffsetBufferLen() { return toIntExact(offsetBufferLen); }
   public long getOffsetBufferLength() { return offsetBufferLen; }
+  public boolean isExtendedFormat() { return extended; }
   public int getNumRows() { return numRows; }
   public int getOffset() { return offset; }
   public int getNumColumns() { return numColumns; }

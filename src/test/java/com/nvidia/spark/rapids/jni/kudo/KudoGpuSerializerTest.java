@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -30,6 +31,23 @@ import static com.nvidia.spark.rapids.jni.kudo.KudoSerializerTest.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class KudoGpuSerializerTest {
+  @Test
+  void rejectsWideStringOffsetsBeforeGpuSerialization() {
+    HostMemoryBuffer data = HostMemoryBuffer.allocate(1, false);
+    data.setByte(0, (byte) 'x');
+    HostMemoryBuffer offsets = HostMemoryBuffer.allocate(16, false);
+    offsets.setLong(0, 0);
+    offsets.setLong(8, 1);
+    try (HostColumnVector host = new HostColumnVector(DType.STRING, 1, Optional.of(0L),
+             data, null, offsets, Collections.emptyList(), DType.INT64);
+         ColumnVector column = host.copyToDevice();
+         Table table = new Table(column)) {
+      CudfException error = assertThrows(CudfException.class,
+          () -> KudoGpuSerializer.splitAndSerializeToDevice(table));
+      assertTrue(error.getMessage().contains("requires INT32 STRING offsets"));
+    }
+  }
+
   /**
    * Used in some performance tests.
    */

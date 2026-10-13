@@ -17,7 +17,22 @@
 #include "cudf_jni_apis.hpp"
 #include "shuffle_split.hpp"
 
+#include <cudf/strings/strings_column_view.hpp>
+
 #include <bit>
+
+namespace {
+void require_narrow_string_offsets(cudf::column_view const& column)
+{
+  if (column.type().id() == cudf::type_id::STRING && !column.is_empty()) {
+    CUDF_EXPECTS(cudf::strings_column_view(column).offsets().type().id() == cudf::type_id::INT32,
+                 "Kudo GPU serialization requires INT32 STRING offsets; use host serialization");
+  }
+  for (int i = 0; i < column.num_children(); ++i) {
+    require_narrow_string_offsets(column.child(i));
+  }
+}
+}  // namespace
 
 extern "C" {
 
@@ -32,6 +47,9 @@ Java_com_nvidia_spark_rapids_jni_kudo_KudoGpuSerializer_splitAndSerializeToDevic
     cudf::jni::auto_set_device(env);
 
     auto table = std::bit_cast<cudf::table_view const*>(j_table_view);
+    for (auto const& column : *table) {
+      require_narrow_string_offsets(column);
+    }
     cudf::jni::native_jintArray const n_splits(env, j_splits);
     std::vector<cudf::size_type> splits = n_splits.to_vector<int>();
 
