@@ -136,6 +136,7 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
 
   @Override
   public void visit(HostColumnVectorCore col) {
+    col.require32BitOffsets("Kudo serialization");
     SliceInfo parent = sliceInfos.peekLast();
     long validityBufferLen = dataLenOfValidityBuffer(col, parent);
     long offsetBufferLen = dataLenOfOffsetBuffer(col, parent);
