@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,6 +55,11 @@ public class ByteArrayOutputStreamWriter implements DataWriter {
   public ByteArrayOutputStreamWriter(ByteArrayOutputStream bout) {
     requireNonNull(bout, "Byte array output stream can't be null");
     this.out = bout;
+  }
+
+  @Override
+  public void reserve(long size) throws IOException {
+    reserve(toIntExact(size));
   }
 
   @Override

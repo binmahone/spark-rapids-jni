@@ -65,6 +65,10 @@ import java.util.stream.IntStream;
  * </ol>
  *
  * <h1>Format</h1>
+ * KUD0 retains the layout described below. KUD1 uses 64-bit validity, offsets and total
+ * buffer lengths and appends an offsets-width bitmap after the validity bitmap. Each STRING
+ * column with a set width bit stores 64-bit offsets; other STRING columns and LIST columns
+ * store 32-bit offsets. Counts of rows and columns remain 32-bit. Readers accept both formats.
  * <p>
  * Similar to {@link JCudfSerialization}, it still consists of two parts: header and body.
  * <p>
@@ -311,7 +315,7 @@ public class KudoSerializer {
          DataOutputStream dos = new DataOutputStream(outputStream)) {
       // write the schema information as a string representation
       dos.write(schema.toString().getBytes());
-    
+
       for (int i = 0; i < kudoTables.length; i++) {
         // write the buffer
         ai.rapids.cudf.HostMemoryBuffer buffer = kudoTables[i].getBuffer();
@@ -436,7 +440,7 @@ public class KudoSerializer {
     Visitors.visitColumns(columns, headerCalc);
     KudoTableHeader header = headerCalc.getHeader();
 
-    out.reserve(toIntExact(header.getSerializedSize() + header.getTotalDataLen()));
+    out.reserve(Math.addExact((long) header.getSerializedSize(), header.getTotalDataLength()));
 
     header.writeTo(out);
     metrics.addWrittenBytes(header.getSerializedSize());
@@ -452,8 +456,8 @@ public class KudoSerializer {
       metrics.addWrittenBytes(serializer.getTotalDataLen());
     }
 
-    if (bytesWritten != header.getTotalDataLen()) {
-      throw new IllegalStateException("Header total data length: " + header.getTotalDataLen() +
+    if (bytesWritten != header.getTotalDataLength()) {
+      throw new IllegalStateException("Header total data length: " + header.getTotalDataLength() +
           " does not match actual written data length: " + bytesWritten +
           ", rowOffset: " + rowOffset + " numRows: " + numRows);
     }

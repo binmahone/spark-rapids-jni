@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,223 +17,166 @@
 package com.nvidia.spark.rapids.jni.kudo;
 
 import ai.rapids.cudf.BufferType;
+import ai.rapids.cudf.DType;
 import ai.rapids.cudf.HostMemoryBuffer;
-
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Optional;
-
 import static com.nvidia.spark.rapids.jni.Preconditions.ensure;
 import static com.nvidia.spark.rapids.jni.Preconditions.ensureNonNegative;
+import static java.lang.Math.toIntExact;
 import static java.util.Objects.requireNonNull;
 
-/**
- * Holds the metadata about a serialized table. If this is being read from a stream
- * isInitialized will return true if the metadata was read correctly from the stream.
- * It will return false if an EOF was encountered at the beginning indicating that
- * there was no data to be read.
- */
+/** Metadata for KUD0 tables and KUD1 tables with wide lengths or STRING offsets. */
 public final class KudoTableHeader {
-  /**
-   * Magic number "KUD0" in ASCII.
-   */
-  private static final int SER_FORMAT_MAGIC_NUMBER = 0x4B554430;
-
-  // The offset in the original table where row starts. For example, if we want to serialize rows [3, 9) of the
-  // original table, offset would be 3, and numRows would be 6.
+  private static final int NARROW_MAGIC = 0x4B554430;
+  private static final int WIDE_MAGIC = 0x4B554431;
   private final int offset;
   private final int numRows;
-  private final int validityBufferLen;
-  private final int offsetBufferLen;
-  private final int totalDataLen;
+  private final long validityBufferLen;
+  private final long offsetBufferLen;
+  private final long totalDataLen;
   private final int numColumns;
-  // A bit set to indicate if a column has a validity buffer or not. Each column is represented by a single bit.
   private final byte[] hasValidityBuffer;
+  private final byte[] wideOffsets;
+  private final boolean extended;
 
-  /**
-   * Reads the table header from the given input stream.
-   *
-   * @param din input stream
-   * @return the table header. If an EOFException is encountered at the beginning, returns empty result.
-   * @throws IOException if an I/O error occurs
-   */
-  public static Optional<KudoTableHeader> readFrom(DataInputStream din) throws IOException {
-    int num;
-    try {
-      num = din.readInt();
-      if (num != SER_FORMAT_MAGIC_NUMBER) {
-        throw new IllegalStateException("Kudo format error, expected magic number " + SER_FORMAT_MAGIC_NUMBER +
-            " found " + num);
-      }
-    } catch (EOFException e) {
-      // If we get an EOF at the very beginning don't treat it as an error because we may
-      // have finished reading everything...
-      return Optional.empty();
+  public static Optional<KudoTableHeader> readFrom(DataInputStream in) throws IOException {
+    int magic;
+    try { magic = in.readInt(); }
+    catch (EOFException end) { return Optional.empty(); }
+    if (magic != NARROW_MAGIC && magic != WIDE_MAGIC) {
+      throw new IllegalStateException("Unsupported Kudo format magic: " + magic);
     }
-
-    int offset = din.readInt();
-    int numRows = din.readInt();
-
-    int validityBufferLen = din.readInt();
-    int offsetBufferLen = din.readInt();
-    int totalDataLen = din.readInt();
-    int numColumns = din.readInt();
-    int validityBufferLength = lengthOfHasValidityBuffer(numColumns);
-    byte[] hasValidityBuffer = new byte[validityBufferLength];
-    din.readFully(hasValidityBuffer);
-
-    return Optional.of(new KudoTableHeader(offset, numRows, validityBufferLen, offsetBufferLen, totalDataLen, numColumns,
-        hasValidityBuffer));
+    boolean extended = magic == WIDE_MAGIC;
+    int offset = in.readInt();
+    int rows = in.readInt();
+    long validity = extended ? in.readLong() : in.readInt();
+    long offsets = extended ? in.readLong() : in.readInt();
+    long data = extended ? in.readLong() : in.readInt();
+    int columns = ensureNonNegative(in.readInt(), "numColumns");
+    byte[] validityBits = new byte[lengthOfHasValidityBuffer(columns)];
+    byte[] widthBits = new byte[validityBits.length];
+    in.readFully(validityBits);
+    if (extended) in.readFully(widthBits);
+    return Optional.of(new KudoTableHeader(offset, rows, validity, offsets, data, columns,
+        validityBits, widthBits, extended));
   }
 
-  KudoTableHeader(int offset, int numRows, int validityBufferLen, int offsetBufferLen,
-                  int totalDataLen, int numColumns, byte[] hasValidityBuffer) {
+  KudoTableHeader(int offset, int rows, int validity, int offsets, int data,
+                 int columns, byte[] validityBits) {
+    this(offset, rows, validity, offsets, data, columns, validityBits,
+        new byte[lengthOfHasValidityBuffer(columns)], false);
+  }
+
+  KudoTableHeader(int offset, int rows, long validity, long offsets, long data,
+                 int columns, byte[] validityBits, byte[] widthBits, boolean forceExtended) {
     this.offset = ensureNonNegative(offset, "offset");
-    this.numRows = ensureNonNegative(numRows, "numRows");
-    this.validityBufferLen = ensureNonNegative(validityBufferLen, "validityBufferLen");
-    this.offsetBufferLen = ensureNonNegative(offsetBufferLen, "offsetBufferLen");
-    this.totalDataLen = ensureNonNegative(totalDataLen, "totalDataLen");
-    this.numColumns = ensureNonNegative(numColumns, "numColumns");
-
-    requireNonNull(hasValidityBuffer, "hasValidityBuffer cannot be null");
-    ensure(hasValidityBuffer.length == lengthOfHasValidityBuffer(numColumns),
-        () -> numColumns + " columns expects hasValidityBuffer with length " + lengthOfHasValidityBuffer(numColumns) +
-            ", but found " + hasValidityBuffer.length);
-    this.hasValidityBuffer = hasValidityBuffer;
+    this.numRows = ensureNonNegative(rows, "numRows");
+    this.validityBufferLen = ensureNonNegative(validity, "validityBufferLen");
+    this.offsetBufferLen = ensureNonNegative(offsets, "offsetBufferLen");
+    this.totalDataLen = ensureNonNegative(data, "totalDataLen");
+    this.numColumns = ensureNonNegative(columns, "numColumns");
+    requireNonNull(validityBits, "hasValidityBuffer");
+    requireNonNull(widthBits, "wideOffsets");
+    ensure(validityBits.length == lengthOfHasValidityBuffer(columns), "Invalid validity bitmap length");
+    ensure(widthBits.length == validityBits.length, "Invalid offsets-width bitmap length");
+    ensure(Math.addExact(validity, offsets) <= data, "Buffer lengths exceed total data length");
+    this.hasValidityBuffer = validityBits;
+    this.wideOffsets = widthBits;
+    this.extended = forceExtended || data > Integer.MAX_VALUE || hasAnyWideOffsets(widthBits);
   }
 
-  /**
-   * Returns the size of a buffer needed to read data into the stream.
-   */
-  public int getTotalDataLen() {
-    return totalDataLen;
+  static boolean hasAnyWideOffsets(byte[] bits) {
+    for (byte value : bits) if (value != 0) return true;
+    return false;
   }
 
-  /**
-   * Returns the number of rows stored in this table.
-   */
-  public int getNumRows() {
-    return numRows;
+  /** Returns an int length; throws ArithmeticException if the value cannot fit. */
+  public int getTotalDataLen() { return toIntExact(totalDataLen); }
+  /** Returns the total payload length in bytes. */
+  public long getTotalDataLength() { return totalDataLen; }
+  public int getValidityBufferLen() { return toIntExact(validityBufferLen); }
+  public long getValidityBufferLength() { return validityBufferLen; }
+  public int getOffsetBufferLen() { return toIntExact(offsetBufferLen); }
+  public long getOffsetBufferLength() { return offsetBufferLen; }
+  public int getNumRows() { return numRows; }
+  public int getOffset() { return offset; }
+  public int getNumColumns() { return numColumns; }
+  public boolean hasValidityBuffer(int index) {
+    return (hasValidityBuffer[index / 8] & (1 << (index % 8))) != 0;
   }
-
-  public int getOffset() {
-    return offset;
+  public DType getOffsetsType(int index) {
+    if (index < 0 || index >= numColumns) throw new IndexOutOfBoundsException("Column " + index);
+    return (wideOffsets[index / 8] & (1 << (index % 8))) != 0 ? DType.INT64 : DType.INT32;
   }
-
-  public boolean hasValidityBuffer(int columnIndex) {
-    int pos = columnIndex / 8;
-    int bit = columnIndex % 8;
-    return (hasValidityBuffer[pos] & (1 << bit)) != 0;
+  byte[] getHasValidityBuffer() { return hasValidityBuffer; }
+  public int getSerializedSize() { return getSerializedSize(hasValidityBuffer.length, extended); }
+  public static int getSerializedSize(int bitmapLength) { return getSerializedSize(bitmapLength, false); }
+  static int getSerializedSize(int bitmapLength, boolean extended) {
+    return Math.addExact(extended ? 40 : 28, Math.multiplyExact(bitmapLength, extended ? 2 : 1));
   }
-
-  byte[] getHasValidityBuffer() {
-    return hasValidityBuffer;
-  }
-
-  /**
-   * Get the size of the serialized header.
-   *
-   * <p>
-   * It consists of the following fields:
-   * <ol>
-   *   <li>Magic Number</li>
-   *   <li>Row Offset</li>
-   *   <li>Number of rows</li>
-   *   <li>Validity buffer length</li>
-   *   <li>Offset buffer length</li>
-   *   <li>Total data length</li>
-   *   <li>Number of columns</li>
-   *   <li>hasValidityBuffer</li>
-   * </ol>
-   * <p>
-   * For more details of each field, please refer to {@link KudoSerializer}.
-   * <p/>
-   *
-   * @return the size of the serialized header.
-   */
-  public int getSerializedSize() {
-    return 7 * Integer.BYTES + hasValidityBuffer.length;
-  }
-
-  public static int getSerializedSize(int hasValiditySize) {
-    return 7 * Integer.BYTES + hasValiditySize;
-  }
-
-  public int getNumColumns() {
-    return numColumns;
-  }
-
-  public int getValidityBufferLen() {
-    return validityBufferLen;
-  }
-
-  public int getOffsetBufferLen() {
-    return offsetBufferLen;
-  }
-
-    public int startOffsetOf(BufferType bufferType) {
-        switch (bufferType) {
-            case VALIDITY:
-                return 0;
-            case OFFSET:
-                return validityBufferLen;
-            case DATA:
-                return validityBufferLen + offsetBufferLen;
-            default:
-                throw new IllegalArgumentException("Unsupported buffer type: " + bufferType);
-        }
+  public int startOffsetOf(BufferType type) { return toIntExact(startOffsetOfLong(type)); }
+  public long startOffsetOfLong(BufferType type) {
+    switch (type) {
+      case VALIDITY: return 0;
+      case OFFSET: return validityBufferLen;
+      case DATA: return Math.addExact(validityBufferLen, offsetBufferLen);
+      default: throw new IllegalArgumentException("Unsupported buffer type: " + type);
     }
-
-  public void writeTo(DataWriter dout) throws IOException {
-    // Now write out the data
-    dout.writeInt(SER_FORMAT_MAGIC_NUMBER);
-
-    dout.writeInt(offset);
-    dout.writeInt(numRows);
-    dout.writeInt(validityBufferLen);
-    dout.writeInt(offsetBufferLen);
-    dout.writeInt(totalDataLen);
-    dout.writeInt(numColumns);
-    dout.write(hasValidityBuffer, 0, hasValidityBuffer.length);
   }
 
-  private static void setInt(HostMemoryBuffer hmb, long hmbOffset, int v) {
-    byte[] bytes = new byte[4];
-    bytes[0] = (byte) ((v >>> 24) & 0xFF);
-    bytes[1] = (byte) ((v >>> 16) & 0xFF);
-    bytes[2] = (byte) ((v >>> 8) & 0xFF);
-    bytes[3] = (byte) (v & 0xFF);
-    hmb.setBytes(hmbOffset, bytes, 0, bytes.length);
+  public void writeTo(DataWriter out) throws IOException {
+    out.writeInt(extended ? WIDE_MAGIC : NARROW_MAGIC);
+    out.writeInt(offset);
+    out.writeInt(numRows);
+    if (extended) {
+      out.writeLong(validityBufferLen);
+      out.writeLong(offsetBufferLen);
+      out.writeLong(totalDataLen);
+    } else {
+      out.writeInt(toIntExact(validityBufferLen));
+      out.writeInt(toIntExact(offsetBufferLen));
+      out.writeInt(toIntExact(totalDataLen));
+    }
+    out.writeInt(numColumns);
+    out.write(hasValidityBuffer, 0, hasValidityBuffer.length);
+    if (extended) out.write(wideOffsets, 0, wideOffsets.length);
   }
 
-  public long writeTo(HostMemoryBuffer hmb, long hmbOffset) {
-    setInt(hmb, hmbOffset, SER_FORMAT_MAGIC_NUMBER);
-    setInt(hmb, hmbOffset + 4, offset);
-    setInt(hmb, hmbOffset + 8, numRows);
-    setInt(hmb, hmbOffset + 12, validityBufferLen);
-    setInt(hmb, hmbOffset + 16, offsetBufferLen);
-    setInt(hmb, hmbOffset + 20, totalDataLen);
-    setInt(hmb, hmbOffset + 24, numColumns);
-    hmb.setBytes(hmbOffset + 28, hasValidityBuffer, 0 , hasValidityBuffer.length);
-    return hmbOffset + getSerializedSize();
+  private static void setInt(HostMemoryBuffer buffer, long at, int value) {
+    byte[] bytes = new byte[] {(byte) (value >>> 24), (byte) (value >>> 16),
+        (byte) (value >>> 8), (byte) value};
+    buffer.setBytes(at, bytes, 0, bytes.length);
   }
-
-  @Override
-  public String toString() {
-    return "SerializedTableHeader{" +
-        "offset=" + offset +
-        ", numRows=" + numRows +
-        ", validityBufferLen=" + validityBufferLen +
-        ", offsetBufferLen=" + offsetBufferLen +
-        ", totalDataLen=" + totalDataLen +
-        ", numColumns=" + numColumns +
-        ", hasValidityBuffer=" + Arrays.toString(hasValidityBuffer) +
-        '}';
+  private static void setLong(HostMemoryBuffer buffer, long at, long value) {
+    setInt(buffer, at, (int) (value >>> 32));
+    setInt(buffer, at + 4, (int) value);
   }
-
-  static int lengthOfHasValidityBuffer(int numColumns) {
-    return (numColumns + 7) / 8;
+  public long writeTo(HostMemoryBuffer buffer, long at) {
+    setInt(buffer, at, extended ? WIDE_MAGIC : NARROW_MAGIC);
+    setInt(buffer, at + 4, offset);
+    setInt(buffer, at + 8, numRows);
+    long next = at + 12;
+    for (long length : new long[] {validityBufferLen, offsetBufferLen, totalDataLen}) {
+      if (extended) { setLong(buffer, next, length); next += 8; }
+      else { setInt(buffer, next, toIntExact(length)); next += 4; }
+    }
+    setInt(buffer, next, numColumns);
+    next += 4;
+    buffer.setBytes(next, hasValidityBuffer, 0, hasValidityBuffer.length);
+    next += hasValidityBuffer.length;
+    if (extended) buffer.setBytes(next, wideOffsets, 0, wideOffsets.length);
+    return at + getSerializedSize();
+  }
+  static int lengthOfHasValidityBuffer(int columns) {
+    ensureNonNegative(columns, "numColumns");
+    return toIntExact((columns + 7L) / 8);
+  }
+  @Override public String toString() {
+    return "KudoTableHeader{offset=" + offset + ", rows=" + numRows +
+        ", dataLength=" + totalDataLen + ", columns=" + numColumns +
+        ", extended=" + extended + "}";
   }
 }

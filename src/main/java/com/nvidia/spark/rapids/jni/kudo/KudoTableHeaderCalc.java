@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
   private final SliceInfo root;
   private final int numFlattenedCols;
   private final byte[] bitset;
+  private final byte[] wideOffsets;
   private long validityBufferLen;
   private long offsetBufferLen;
   private long dataOnlyLen;
@@ -52,26 +53,26 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
     this.dataOnlyLen = 0;
     sliceInfos.addLast(this.root);
     this.bitset = new byte[(numFlattenedCols + 7) / 8];
+    this.wideOffsets = new byte[bitset.length];
     this.numFlattenedCols = numFlattenedCols;
     this.nextColIdx = 0;
   }
 
   public KudoTableHeader getHeader() {
-    int headerSize = KudoTableHeader.getSerializedSize(bitset.length);
-    // The validity is a bit odd because we want to pad it for 4 byte alignment
-    // But that is relative to the header, not the payload buffer
-    long paddedValiditySize = padForValidityAlignment(validityBufferLen, headerSize);
+    boolean extended = KudoTableHeader.hasAnyWideOffsets(wideOffsets);
     long paddedOffsetsSize = padForHostAlignment(offsetBufferLen);
     long paddedDataSize = padForHostAlignment(dataOnlyLen);
-    return new KudoTableHeader(toIntExact(root.offset),
-        toIntExact(root.rowCount),
-        toIntExact(paddedValiditySize),
-        toIntExact(paddedOffsetsSize),
-        toIntExact(paddedValiditySize +
-            paddedOffsetsSize +
-            paddedDataSize),
-        numFlattenedCols,
-        bitset);
+    int headerSize = KudoTableHeader.getSerializedSize(bitset.length, extended);
+    long paddedValiditySize = padForValidityAlignment(validityBufferLen, headerSize);
+    long total = Math.addExact(Math.addExact(paddedValiditySize, paddedOffsetsSize), paddedDataSize);
+    if (!extended && total > Integer.MAX_VALUE) {
+      extended = true;
+      headerSize = KudoTableHeader.getSerializedSize(bitset.length, true);
+      paddedValiditySize = padForValidityAlignment(validityBufferLen, headerSize);
+      total = Math.addExact(Math.addExact(paddedValiditySize, paddedOffsetsSize), paddedDataSize);
+    }
+    return new KudoTableHeader(toIntExact(root.offset), toIntExact(root.rowCount),
+        paddedValiditySize, paddedOffsetsSize, total, numFlattenedCols, bitset, wideOffsets, extended);
   }
 
   @Override
@@ -136,7 +137,9 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
 
   @Override
   public void visit(HostColumnVectorCore col) {
-    col.require32BitOffsets("Kudo serialization");
+    if (DType.STRING.equals(col.getType()) && DType.INT64.equals(col.getOffsetsType())) {
+      wideOffsets[nextColIdx / 8] |= (byte) (1 << (nextColIdx % 8));
+    }
     SliceInfo parent = sliceInfos.peekLast();
     long validityBufferLen = dataLenOfValidityBuffer(col, parent);
     long offsetBufferLen = dataLenOfOffsetBuffer(col, parent);
@@ -171,7 +174,7 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
 
   private static long dataLenOfOffsetBuffer(HostColumnVectorCore col, SliceInfo info) {
     if (DType.STRING.equals(col.getType()) && info.getRowCount() > 0) {
-      return (info.rowCount + 1L) * Integer.BYTES;
+      return (info.rowCount + 1L) * col.getOffsetsType().getSizeInBytes();
     } else {
       return 0;
     }
@@ -180,8 +183,11 @@ class KudoTableHeaderCalc implements HostColumnsVisitor {
   private static long dataLenOfDataBuffer(HostColumnVectorCore col, SliceInfo info) {
     if (DType.STRING.equals(col.getType())) {
       if (col.getOffsets() != null) {
-        long startByteOffset = col.getOffsets().getInt(info.offset * Integer.BYTES);
-        long endByteOffset = col.getOffsets().getInt((info.offset + info.rowCount) * Integer.BYTES);
+        long startByteOffset = StringOffsets.read(col, info.offset);
+        long endByteOffset = StringOffsets.read(col, (long) info.offset + info.rowCount);
+        if (startByteOffset < 0 || endByteOffset < startByteOffset) {
+          throw new IllegalArgumentException("Invalid string offsets");
+        }
         return endByteOffset - startByteOffset;
       } else {
         return 0;

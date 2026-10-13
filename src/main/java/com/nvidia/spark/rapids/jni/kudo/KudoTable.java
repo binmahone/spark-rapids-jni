@@ -70,8 +70,8 @@ public class KudoTable implements AutoCloseable {
     }
 
     return Arms.closeIfExceptionChecked(
-        HostMemoryBuffer.allocate(header.getTotalDataLen(), false), buffer -> {
-          buffer.copyFromStream(0, din, header.getTotalDataLen());
+        HostMemoryBuffer.allocate(header.getTotalDataLength(), false), buffer -> {
+          buffer.copyFromStream(0, din, header.getTotalDataLength());
           return Optional.of(new KudoTable(header, buffer));
         });
   }
