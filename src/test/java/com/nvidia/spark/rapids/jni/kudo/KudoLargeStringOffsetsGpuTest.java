@@ -36,12 +36,15 @@ class KudoLargeStringOffsetsGpuTest {
         Collections.emptyList(), wide ? DType.INT64 : DType.INT32);
   }
   private static void assertDense(Table table, int rows) {
-    assertEquals(DType.INT64, table.getColumn(0).getOffsetsType());
+    assertDenseColumn(table, 0, rows, DType.INT64);
+  }
+  private static void assertDenseColumn(Table table, int index, int rows, DType offsetsType) {
+    assertEquals(offsetsType, table.getColumn(index).getOffsetsType());
     byte[] expected = new byte[BYTES_PER_ROW];
     Arrays.fill(expected, (byte) 'X');
-    try (HostColumnVector host = table.getColumn(0).copyToHost()) {
+    try (HostColumnVector host = table.getColumn(index).copyToHost()) {
       assertEquals(rows, host.getRowCount());
-      assertEquals(DType.INT64, host.getOffsetsType());
+      assertEquals(offsetsType, host.getOffsetsType());
       assertEquals((long) rows * BYTES_PER_ROW, host.getData().getLength());
       for (int row = 0; row < rows; row++) {
         assertEquals((long) row * BYTES_PER_ROW, host.getStartListOffset(row));
@@ -90,6 +93,31 @@ class KudoLargeStringOffsetsGpuTest {
           assertTrue(packed.getHeader().getTotalDataLength() < Integer.MAX_VALUE);
           assertEquals(DType.INT64, merged.getColumnInfoList()[0].getOffsetInfo().getOffsetsType());
           assertDense(table, 2050);
+        }
+      }
+    } finally {
+      Files.deleteIfExists(path);
+    }
+  }
+  @Test void totalPayloadOverTwoGiBDoesNotWidenNarrowStringColumns() throws Exception {
+    Path path = Files.createTempFile("kudo-large-narrow-columns-", ".bin");
+    KudoSerializer serializer = new KudoSerializer(KudoStringOffsetsTest.schema(2));
+    try {
+      try (HostColumnVector input = dense(false, 1025)) {
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(path), BYTES_PER_ROW)) {
+          serializer.writeToStreamWithMetrics(new HostColumnVector[]{input, input}, out, 0, 1025);
+        }
+        assertTrue(Files.size(path) > Integer.MAX_VALUE);
+        try (InputStream in = new BufferedInputStream(Files.newInputStream(path), BYTES_PER_ROW);
+             KudoTable packed = KudoTable.from(in).get();
+             KudoHostMergeResult merged = serializer.mergeOnHost(new KudoTable[]{packed});
+             Table table = merged.toTable()) {
+          assertTrue(packed.getHeader().isExtendedFormat());
+          assertTrue(packed.getHeader().getTotalDataLength() > Integer.MAX_VALUE);
+          for (int index = 0; index < 2; index++) {
+            assertEquals(DType.INT32, packed.getHeader().getOffsetsType(index));
+            assertDenseColumn(table, index, 1025, DType.INT32);
+          }
         }
       }
     } finally {
