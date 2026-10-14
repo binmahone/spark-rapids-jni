@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class KudoGpuSerializerTest {
   @Test
-  void rejectsWideStringOffsetsBeforeGpuSerialization() {
+  void narrowFormatRejectsWideStringOffsetsBeforeGpuSerialization() {
     HostMemoryBuffer data = HostMemoryBuffer.allocate(1, false);
     data.setByte(0, (byte) 'x');
     HostMemoryBuffer offsets = HostMemoryBuffer.allocate(16, false);
@@ -43,7 +43,7 @@ public class KudoGpuSerializerTest {
          ColumnVector column = host.copyToDevice();
          Table table = new Table(column)) {
       CudfException error = assertThrows(CudfException.class,
-          () -> KudoGpuSerializer.splitAndSerializeToDevice(table));
+          () -> KudoGpuSerializer.splitAndSerializeToDevice(table, false));
       assertTrue(error.getMessage().contains("requires INT32 STRING offsets"));
     }
   }

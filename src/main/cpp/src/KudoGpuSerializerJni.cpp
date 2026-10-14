@@ -26,7 +26,7 @@ void require_narrow_string_offsets(cudf::column_view const& column)
 {
   if (column.type().id() == cudf::type_id::STRING && !column.is_empty()) {
     CUDF_EXPECTS(cudf::strings_column_view(column).offsets().type().id() == cudf::type_id::INT32,
-                 "Kudo GPU serialization requires INT32 STRING offsets; use host serialization");
+                 "Narrow Kudo GPU serialization requires INT32 STRING offsets; use extended format");
   }
   for (int i = 0; i < column.num_children(); ++i) {
     require_narrow_string_offsets(column.child(i));
@@ -38,7 +38,7 @@ extern "C" {
 
 JNIEXPORT jlongArray JNICALL
 Java_com_nvidia_spark_rapids_jni_kudo_KudoGpuSerializer_splitAndSerializeToDevice(
-  JNIEnv* env, jclass, jlong j_table_view, jintArray j_splits)
+  JNIEnv* env, jclass, jlong j_table_view, jboolean extended_format, jintArray j_splits)
 {
   JNI_NULL_CHECK(env, j_table_view, "table is null", NULL);
   JNI_NULL_CHECK(env, j_splits, "splits is null", NULL);
@@ -47,14 +47,19 @@ Java_com_nvidia_spark_rapids_jni_kudo_KudoGpuSerializer_splitAndSerializeToDevic
     cudf::jni::auto_set_device(env);
 
     auto table = std::bit_cast<cudf::table_view const*>(j_table_view);
-    for (auto const& column : *table) {
-      require_narrow_string_offsets(column);
+    if (!extended_format) {
+      for (auto const& column : *table) {
+        require_narrow_string_offsets(column);
+      }
     }
     cudf::jni::native_jintArray const n_splits(env, j_splits);
     std::vector<cudf::size_type> splits = n_splits.to_vector<int>();
 
-    auto [split_result, split_meta] = spark_rapids_jni::shuffle_split(
-      *table, splits, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+    auto [split_result, split_meta] = extended_format
+      ? spark_rapids_jni::shuffle_split_extended(
+          *table, splits, cudf::get_default_stream(), cudf::get_current_device_resource_ref())
+      : spark_rapids_jni::shuffle_split(
+          *table, splits, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
     // The following code is ugly. We need to return two device buffers to java, but
     // there is no good way to do this. For this we return three values for each buffer.
@@ -93,7 +98,8 @@ Java_com_nvidia_spark_rapids_jni_kudo_KudoGpuSerializer_assembleFromDeviceRawNat
   jlong offset_len,
   jintArray flat_num_children,
   jintArray flat_type_ids,
-  jintArray flat_scale)
+  jintArray flat_scale,
+  jint format_mode)
 {
   JNI_NULL_CHECK(env, part_addr, "part_addr is null", NULL);
   JNI_NULL_CHECK(env, offset_addr, "offset_addr is null", NULL);
@@ -126,11 +132,13 @@ Java_com_nvidia_spark_rapids_jni_kudo_KudoGpuSerializer_assembleFromDeviceRawNat
     }
 
     // Get shuffle assemble result from shuffle_assemble
-    auto assemble_result = shuffle_assemble(meta,
-                                            partitions,
-                                            offsets,
-                                            cudf::get_default_stream(),
-                                            cudf::get_current_device_resource_ref());
+    auto const stream = cudf::get_default_stream();
+    bool const extended = format_mode > 0 || (format_mode < 0 &&
+      spark_rapids_jni::requires_extended_assembly(partitions, offsets, stream));
+    auto assemble_result = extended
+      ? spark_rapids_jni::shuffle_assemble_extended(
+          meta, partitions, offsets, stream, cudf::get_current_device_resource_ref())
+      : shuffle_assemble(meta, partitions, offsets, stream, cudf::get_current_device_resource_ref());
 
     // Create buffer metadata. The device DATA address must be captured and returned separately
     // from the rmm::device_buffer* owner handle: Java wraps this allocation via

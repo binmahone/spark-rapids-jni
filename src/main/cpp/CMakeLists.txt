@@ -300,6 +300,7 @@ add_library(
   src/row_conversion.cu
   src/round_float.cu
   src/shuffle_assemble.cu
+  src/shuffle_extended.cu
   src/shuffle_split.cu
   src/substring_index.cu
   src/timezones.cu
