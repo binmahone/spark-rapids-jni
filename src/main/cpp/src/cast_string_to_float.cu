@@ -792,7 +792,7 @@ class string_to_float {
   // outgoing ansi_except field
   __device__ void compute_validity(bool const valid, bool const except = false)
   {
-    if (threadIdx.x == 0 && _ansi_except && except) { atomicMax(_ansi_except, _num_rows - _row); }
+    if (_warp_lane == 0 && _ansi_except && except) { atomicMax(_ansi_except, _num_rows - _row); }
 
     // 0th thread in each warp updates the validity
     size_type const row_id = _warp_id;

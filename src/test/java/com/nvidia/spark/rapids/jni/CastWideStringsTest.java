@@ -154,6 +154,19 @@ class CastWideStringsTest {
   }
 
   @Test
+  void floatAnsiErrorReportsNonFirstWarp() {
+    try (ColumnVector input = ColumnVector.fromStrings("264.125", null, "883.0", "invalid-float")) {
+      CastException error = assertThrows(CastException.class,
+          () -> {
+            try (ColumnVector ignored = CastStrings.toFloat(input, true, DType.FLOAT64)) {
+            }
+          });
+      assertEquals(3, error.getRowWithError());
+      assertEquals("invalid-float", error.getStringWithError());
+    }
+  }
+
+  @Test
   void integerAnsiErrorPreservesWideInput() {
     try (HostColumnVector host = wideStrings("264", null, "883", "invalid-integer");
          ColumnVector input = host.copyToDevice()) {
