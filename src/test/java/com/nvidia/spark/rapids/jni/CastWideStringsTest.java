@@ -46,6 +46,40 @@ class CastWideStringsTest {
   }
 
   @Test
+  void numericValuesAfterTwoGiBOfChars() {
+    int paddingRows = 2049;
+    int rows = paddingRows + 2;
+    long prefixBytes = paddingRows * (1L << 20);
+    HostMemoryBuffer data = HostMemoryBuffer.allocate(prefixBytes + 6, false);
+    data.setMemory(0, prefixBytes, (byte) 'x');
+    data.setBytes(prefixBytes, new byte[]{'2', '6', '4', '8', '8', '3'}, 0, 6);
+    HostMemoryBuffer offsets = HostMemoryBuffer.allocate((rows + 1L) * 8, false);
+    for (int row = 0; row <= paddingRows; row++) {
+      offsets.setLong(row * 8L, row * (1L << 20));
+    }
+    offsets.setLong((paddingRows + 1L) * 8, prefixBytes + 3);
+    offsets.setLong((rows * 8L), prefixBytes + 6);
+    try (HostColumnVector host = new HostColumnVector(DType.STRING, rows, Optional.of(0L),
+             data, null, offsets, Collections.emptyList(), DType.INT64);
+         ColumnVector input = host.copyToDevice();
+         ColumnVector integers = CastStrings.toInteger(input, false, DType.INT64);
+         HostColumnVector integerValues = integers.copyToHost();
+         ColumnVector decimals = CastStrings.toDecimal(input, false, 15, -2);
+         HostColumnVector decimalValues = decimals.copyToHost();
+         ColumnVector floats = CastStrings.toFloat(input, false, DType.FLOAT64);
+         HostColumnVector floatValues = floats.copyToHost()) {
+      assertEquals(DType.INT64, input.getOffsetsType());
+      assertTrue(prefixBytes > Integer.MAX_VALUE);
+      assertEquals(264, integerValues.getLong(paddingRows));
+      assertEquals(883, integerValues.getLong(paddingRows + 1));
+      assertEquals(new BigDecimal("264.00"), decimalValues.getBigDecimal(paddingRows));
+      assertEquals(new BigDecimal("883.00"), decimalValues.getBigDecimal(paddingRows + 1));
+      assertEquals(264.0, floatValues.getDouble(paddingRows));
+      assertEquals(883.0, floatValues.getDouble(paddingRows + 1));
+    }
+  }
+
+  @Test
   void integerValuesWithWideOffsets() {
     try (HostColumnVector host = wideStrings("264", "883", null, "", "bad", "-21", " 17 ");
          ColumnVector input = host.copyToDevice()) {
@@ -82,6 +116,40 @@ class CastWideStringsTest {
           assertEquals(new BigDecimal("-21.34"), actual.getBigDecimal(5));
         }
       }
+    }
+  }
+
+  @Test
+  void floatValuesWithWideOffsets() {
+    try (HostColumnVector host = wideStrings("264.125", "883.00", null, "", "bad", "-21.5");
+         ColumnVector input = host.copyToDevice()) {
+      assertEquals(DType.INT64, input.getOffsetsType());
+      for (DType type : new DType[]{DType.FLOAT32, DType.FLOAT64}) {
+        try (ColumnVector output = CastStrings.toFloat(input, false, type);
+             ColumnVector doubles = output.castTo(DType.FLOAT64);
+             HostColumnVector actual = doubles.copyToHost()) {
+          assertEquals(264.125, actual.getDouble(0));
+          assertEquals(883.0, actual.getDouble(1));
+          assertTrue(actual.isNull(2));
+          assertTrue(actual.isNull(3));
+          assertTrue(actual.isNull(4));
+          assertEquals(-21.5, actual.getDouble(5));
+        }
+      }
+    }
+  }
+
+  @Test
+  void floatAnsiErrorPreservesWideInput() {
+    try (HostColumnVector host = wideStrings("264.125", null, "883.0", "invalid-float");
+         ColumnVector input = host.copyToDevice()) {
+      CastException error = assertThrows(CastException.class,
+          () -> {
+            try (ColumnVector ignored = CastStrings.toFloat(input, true, DType.FLOAT64)) {
+            }
+          });
+      assertEquals(3, error.getRowWithError());
+      assertEquals("invalid-float", error.getStringWithError());
     }
   }
 

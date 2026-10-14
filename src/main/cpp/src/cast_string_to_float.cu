@@ -18,6 +18,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -297,7 +298,7 @@ class string_to_float {
                              int32_t* ansi_except,
                              size_type* valid_count,
                              char const* const chars,
-                             size_type const* offsets,
+                             cudf::detail::input_offsetalator offsets,
                              uint64_t const* const ipow,
                              bitmask_type const* incoming_null_mask,
                              size_type const num_rows)
@@ -810,7 +811,7 @@ class string_to_float {
   size_type const _warp_id;
   size_type const _row;
   size_type const _warp_lane;
-  size_type const _row_start;
+  int64_t const _row_start;
   size_type const _len;
   size_type const _num_rows;
   uint64_t const* const _ipow;
@@ -831,7 +832,7 @@ CUDF_KERNEL void string_to_float_kernel(T* out,
                                         int32_t* ansi_except,
                                         size_type* valid_count,
                                         char const* const chars,
-                                        size_type const* offsets,
+                                        cudf::detail::input_offsetalator offsets,
                                         bitmask_type const* incoming_null_mask,
                                         size_type const num_rows)
 {
@@ -915,7 +916,7 @@ std::unique_ptr<column> string_to_float(data_type dtype,
         ansi_mode ? static_cast<ScalarType*>(ansi_count.get())->data() : nullptr,
         static_cast<ScalarType*>(valid_count.get())->data(),
         string_col.chars_begin(stream),
-        string_col.offsets().begin<size_type>(),
+        cudf::detail::offsetalator_factory::make_input_iterator(string_col.offsets()),
         string_col.null_mask(),
         num_rows);
   } else {
@@ -926,7 +927,7 @@ std::unique_ptr<column> string_to_float(data_type dtype,
         ansi_mode ? static_cast<ScalarType*>(ansi_count.get())->data() : nullptr,
         static_cast<ScalarType*>(valid_count.get())->data(),
         string_col.chars_begin(stream),
-        string_col.offsets().begin<size_type>(),
+        cudf::detail::offsetalator_factory::make_input_iterator(string_col.offsets()),
         string_col.null_mask(),
         num_rows);
   }
@@ -937,13 +938,25 @@ std::unique_ptr<column> string_to_float(data_type dtype,
     auto const val = static_cast<ScalarType*>(ansi_count.get())->value(stream);
     if (val >= 0) {
       auto const error_row = num_rows - val;
-      size_type string_bounds[2];
-      cudaMemcpyAsync(&string_bounds,
-                      &string_col.offsets().data<size_type>()[error_row],
-                      sizeof(size_type) * 2,
-                      cudaMemcpyDefault,
-                      stream.get());
-      stream.sync();
+      int64_t string_bounds[2];
+      if (string_col.offsets().type().id() == type_id::INT64) {
+        cudaMemcpyAsync(string_bounds,
+                        &string_col.offsets().data<int64_t>()[error_row],
+                        sizeof(int64_t) * 2,
+                        cudaMemcpyDefault,
+                        stream.get());
+        stream.sync();
+      } else {
+        size_type narrow_bounds[2];
+        cudaMemcpyAsync(narrow_bounds,
+                        &string_col.offsets().data<size_type>()[error_row],
+                        sizeof(size_type) * 2,
+                        cudaMemcpyDefault,
+                        stream.get());
+        stream.sync();
+        string_bounds[0] = narrow_bounds[0];
+        string_bounds[1] = narrow_bounds[1];
+      }
 
       std::string dest;
       dest.resize(string_bounds[1] - string_bounds[0]);
