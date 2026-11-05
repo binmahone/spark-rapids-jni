@@ -66,7 +66,8 @@ mvn -B -ntp -Dmaven.repo.local="$own/maven-repository" -Parm64 \
   -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_CUDF_TESTS=OFF \
   -DBUILD_CUDF_BENCHMARKS=OFF -DCPP_PARALLEL_LEVEL=48 \
   -DCMAKE_CUDA_ARCHITECTURES=100-real -Dlibcudf.build.configure=false \
-  -Dtest=PackedHostToDeviceCopyTest -DfailIfNoTests=true -DallowIncompleteProjects=true install \
+  -Dtest=PackedHostToDeviceCopyTest,RapidsInputFileTest -DfailIfNoTests=true \
+  -Drapids.test.rangeIoTiming=true -DallowIncompleteProjects=true install \
   2>&1 | tee "$logs/jni-build-and-tests.log"
 readonly jar=$own/maven-repository/com/nvidia/cudf-spark-jni/26.12.0-SNAPSHOT/cudf-spark-jni-26.12.0-SNAPSHOT-cuda13-arm64.jar
 test -s "$jar"

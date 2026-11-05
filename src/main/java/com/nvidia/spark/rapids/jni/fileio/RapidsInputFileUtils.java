@@ -65,18 +65,51 @@ final class RapidsInputFileUtils {
       HostMemoryBuffer output,
       List<RapidsInputFile.CopyRange> copyRanges,
       byte[] copyBuffer) throws IOException {
-    for (RapidsInputFile.CopyRange copyRange : copyRanges) {
-      if (input.getPos() != copyRange.getInputOffset()) {
-        input.seek(copyRange.getInputOffset());
+    boolean timing = Boolean.getBoolean("rapids.test.rangeIoTiming");
+    long started = timing ? System.nanoTime() : 0;
+    long readNanos = 0;
+    long copyNanos = 0;
+    long seekNanos = 0;
+    long copiedBytes = 0;
+    long readCalls = 0;
+    boolean completed = false;
+    try {
+      for (RapidsInputFile.CopyRange copyRange : copyRanges) {
+        long seekStarted = timing ? System.nanoTime() : 0;
+        if (input.getPos() != copyRange.getInputOffset()) {
+          input.seek(copyRange.getInputOffset());
+        }
+        if (timing) {
+          seekNanos += System.nanoTime() - seekStarted;
+        }
+        long outputOffset = copyRange.getOutputOffset();
+        long bytesLeft = copyRange.getLength();
+        while (bytesLeft > 0) {
+          int readLength = (int) Math.min(bytesLeft, copyBuffer.length);
+          long readStarted = timing ? System.nanoTime() : 0;
+          readFully(input, copyBuffer, readLength);
+          if (timing) {
+            readNanos += System.nanoTime() - readStarted;
+          }
+          long copyStarted = timing ? System.nanoTime() : 0;
+          output.setBytes(outputOffset, copyBuffer, 0, readLength);
+          if (timing) {
+            copyNanos += System.nanoTime() - copyStarted;
+            copiedBytes += readLength;
+            readCalls++;
+          }
+          outputOffset += readLength;
+          bytesLeft -= readLength;
+        }
       }
-      long outputOffset = copyRange.getOutputOffset();
-      long bytesLeft = copyRange.getLength();
-      while (bytesLeft > 0) {
-        int readLength = (int) Math.min(bytesLeft, copyBuffer.length);
-        readFully(input, copyBuffer, readLength);
-        output.setBytes(outputOffset, copyBuffer, 0, readLength);
-        outputOffset += readLength;
-        bytesLeft -= readLength;
+      completed = true;
+    } finally {
+      if (timing) {
+        System.err.println("RANGE_IO_TIMING thread=" + Thread.currentThread().getName()
+            .replace(' ', '_') + " bytes=" + copiedBytes + " calls=" + readCalls
+            + " readNs=" + readNanos + " copyNs=" + copyNanos + " seekNs=" + seekNanos
+            + " totalNs=" + (System.nanoTime() - started) + " bufferBytes=" + copyBuffer.length
+            + " ranges=" + copyRanges.size() + " completed=" + completed);
       }
     }
   }
