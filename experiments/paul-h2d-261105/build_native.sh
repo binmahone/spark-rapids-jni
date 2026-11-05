@@ -8,13 +8,13 @@ mkdir -p "$logs" "$own/tools" "$own/maven-repository"
 df -hT / /home/mahonem > "$logs/capacity-before.txt"
 test "$(df -PB1 /home/mahonem | awk 'NR==2 {print $4}')" -gt 322122547200
 test "$(df -PB1 / | awk 'NR==2 {print $4}')" -gt 21474836480
-test "$(git -C "$src" rev-parse HEAD)" = "${JNI_REVISION:?}"
-test -z "$(git -C "$src" status --short)"
 export DEBIAN_FRONTEND=noninteractive
 timeout 180 apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=30
 timeout 240 apt-get install -y -qq --no-install-recommends \
   openjdk-17-jdk-headless python3 git ninja-build curl unzip zip patch \
   zlib1g-dev libnuma-dev libboost-filesystem-dev build-essential
+test "$(git -C "$src" rev-parse HEAD)" = "${JNI_REVISION:?}"
+test -z "$(git -C "$src" status --short)"
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
 export PATH="$legacy/tools/maven/bin:$JAVA_HOME/bin:$PATH"
 readonly cmake=$own/tools/cmake-4.0.3-linux-aarch64
