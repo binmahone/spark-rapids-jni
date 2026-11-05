@@ -11,7 +11,7 @@ test "$(df -PB1 / | awk 'NR==2 {print $4}')" -gt 21474836480
 export DEBIAN_FRONTEND=noninteractive
 timeout 180 apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=30
 timeout 240 apt-get install -y -qq --no-install-recommends \
-  openjdk-17-jdk-headless python3 git ninja-build curl unzip zip patch \
+  openjdk-17-jdk python3 git ninja-build curl unzip zip patch \
   zlib1g-dev libnuma-dev libboost-filesystem-dev build-essential
 test "$(git -C "$src" rev-parse HEAD)" = "${JNI_REVISION:?}"
 test -z "$(git -C "$src" status --short)"
