@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,6 +38,11 @@ class ColumnViewInfo {
     this.rowCount = rowCount;
   }
 
+  long getRowCount() { return rowCount; }
+  long getNullCount() { return nullCount; }
+
+  ColumnOffsetInfo getOffsetInfo() { return offsetInfo; }
+
   ColumnView buildColumnView(DeviceMemoryBuffer buffer, ColumnView[] childrenView) {
     long baseAddress = buffer.getAddress();
 
@@ -50,7 +55,7 @@ class ColumnViewInfo {
       return new ColumnView(dtype, rowCount, Optional.of(nullCount),
           offsetInfo.getDataBuffer(baseAddress),
           offsetInfo.getValidityBuffer(baseAddress),
-          offsetInfo.getOffsetBuffer(baseAddress));
+          offsetInfo.getOffsetBuffer(baseAddress), offsetInfo.getOffsetsType());
     }
   }
 

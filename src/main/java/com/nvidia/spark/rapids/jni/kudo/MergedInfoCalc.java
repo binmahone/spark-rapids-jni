@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.jni.kudo;
 
 import ai.rapids.cudf.BufferType;
+import ai.rapids.cudf.DType;
 import ai.rapids.cudf.Schema;
 import com.nvidia.spark.rapids.jni.schema.SimpleSchemaVisitor;
 import com.nvidia.spark.rapids.jni.schema.Visitors;
@@ -38,6 +39,7 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
     private final boolean[] hasNull;
     private final long[] rowCount;
     private final long[] dataLen;
+    private final DType[] offsetsTypes;
 
     // Column offset in gpu device buffer, it has one field for each flattened column
     private final ColumnOffsetInfo[] columnOffsets;
@@ -52,6 +54,8 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
         initHasNull();
         this.rowCount = new long[columnCount];
         this.dataLen = new long[columnCount];
+        this.offsetsTypes = new DType[columnCount];
+        Arrays.fill(offsetsTypes, DType.INT32);
         this.columnOffsets = new ColumnOffsetInfo[columnCount];
     }
 
@@ -189,8 +193,9 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
         if (rowCount[curColIdx] > 0) {
             if (primitiveType.getType().hasOffsets()) {
                 offsetOffset = totalDataLen;
+                if (dataLen[curColIdx] > Integer.MAX_VALUE) offsetsTypes[curColIdx] = DType.INT64;
                 offsetBufferLen = padFor64byteAlignment(
-                    (rowCount[curColIdx] + 1) * Integer.BYTES);
+                    (rowCount[curColIdx] + 1) * offsetsTypes[curColIdx].getSizeInBytes());
                 totalDataLen += offsetBufferLen;
 
                 dataOffset = totalDataLen;
@@ -206,7 +211,7 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
         columnOffsets[curColIdx] = new ColumnOffsetInfo(validityOffset, validityBufferLen,
             offsetOffset,
                 offsetBufferLen,
-                dataOffset, dataBufferLen);
+                dataOffset, dataBufferLen, offsetsTypes[curColIdx]);
         curColIdx++;
     }
 
@@ -218,7 +223,7 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
 
         SingleTableVisitor(KudoTable table) {
             this.table = table;
-            this.bufferOffset = table.getHeader().startOffsetOf(BufferType.OFFSET);
+            this.bufferOffset = table.getHeader().startOffsetOfLong(BufferType.OFFSET);
             sliceInfos.addLast(new SliceInfo(table.getHeader().getOffset(), table.getHeader().getNumRows()));
         }
 
@@ -228,6 +233,9 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
 
         @Override
         public void preVisitStruct(Schema structType) {
+            if (!DType.INT32.equals(table.getHeader().getOffsetsType(curColIdx))) {
+                throw new IllegalArgumentException("STRUCT cannot have wide offsets");
+            }
             SliceInfo sliceInfo = sliceInfos.getLast();
             rowCount[curColIdx] = Math.addExact(rowCount[curColIdx], sliceInfo.getRowCount());
 
@@ -241,6 +249,9 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
 
         @Override
         public void preVisitList(Schema listType) {
+            if (!DType.INT32.equals(table.getHeader().getOffsetsType(curColIdx))) {
+                throw new IllegalArgumentException("LIST offsets must be INT32");
+            }
             SliceInfo sliceInfo = sliceInfos.getLast();
             rowCount[curColIdx] = Math.addExact(rowCount[curColIdx], sliceInfo.getRowCount());
 
@@ -267,17 +278,29 @@ class MergedInfoCalc implements SimpleSchemaVisitor {
 
         @Override
         public void visit(Schema primitiveType) {
+            if (!primitiveType.getType().hasOffsets() &&
+                !DType.INT32.equals(table.getHeader().getOffsetsType(curColIdx))) {
+                throw new IllegalArgumentException("Wide offsets require STRING");
+            }
             SliceInfo sliceInfo = sliceInfos.getLast();
             rowCount[curColIdx] = Math.addExact(rowCount[curColIdx], sliceInfo.getRowCount());
             if (primitiveType.getType().hasOffsets()) {
-                // string type
+                // String offsets use the width stored in each input table header.
+                if (DType.INT64.equals(table.getHeader().getOffsetsType(curColIdx))) {
+                    offsetsTypes[curColIdx] = DType.INT64;
+                }
                 if (sliceInfo.getRowCount() > 0) {
-                    int startOffset = table.getBuffer().getInt(bufferOffset);
-                    int endOffset = table.getBuffer().getInt(bufferOffset +
-                        (long) sliceInfo.getRowCount() * Integer.BYTES);
-                    dataLen[curColIdx] += (endOffset - startOffset);
+                    DType width = table.getHeader().getOffsetsType(curColIdx);
+                    if (DType.INT64.equals(width)) offsetsTypes[curColIdx] = DType.INT64;
+                    long startOffset = StringOffsets.read(table.getBuffer(), bufferOffset, width);
+                    long endOffset = StringOffsets.read(table.getBuffer(), bufferOffset +
+                        (long) sliceInfo.getRowCount() * width.getSizeInBytes(), width);
+                    if (startOffset < 0 || endOffset < startOffset) {
+                        throw new IllegalArgumentException("Invalid serialized string offsets");
+                    }
+                    dataLen[curColIdx] = Math.addExact(dataLen[curColIdx], endOffset - startOffset);
                     bufferOffset += padForHostAlignment(
-                        (long) (sliceInfo.getRowCount() + 1) * Integer.BYTES);
+                        (sliceInfo.getRowCount() + 1L) * width.getSizeInBytes());
                 }
             }
             // We don't need to update data len for non string primitive type

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.jni.kudo;
 
 import ai.rapids.cudf.DeviceMemoryBufferView;
+import ai.rapids.cudf.DType;
 
 import static com.nvidia.spark.rapids.jni.Preconditions.ensureNonNegative;
 
@@ -25,6 +26,7 @@ import static com.nvidia.spark.rapids.jni.Preconditions.ensureNonNegative;
  */
 class ColumnOffsetInfo {
   static final long INVALID_OFFSET = -1L;
+  private final DType offsetsType;
   private final long validity;
   private final long validityBufferLen;
   private final long offset;
@@ -34,6 +36,12 @@ class ColumnOffsetInfo {
 
   public ColumnOffsetInfo(long validity, long validityBufferLen, long offset, long offsetBufferLen, long data,
                           long dataBufferLen) {
+    this(validity, validityBufferLen, offset, offsetBufferLen, data, dataBufferLen, DType.INT32);
+  }
+
+  ColumnOffsetInfo(long validity, long validityBufferLen, long offset, long offsetBufferLen,
+                   long data, long dataBufferLen, DType offsetsType) {
+    this.offsetsType = offsetsType;
     ensureNonNegative(validityBufferLen, "validityBuffeLen");
     ensureNonNegative(offsetBufferLen, "offsetBufferLen");
     ensureNonNegative(dataBufferLen, "dataBufferLen");
@@ -49,6 +57,8 @@ class ColumnOffsetInfo {
    * Get the validity buffer offset.
    * @return {@value #INVALID_OFFSET} if the validity buffer is not present, otherwise the offset.
    */
+  DType getOffsetsType() { return offsetsType; }
+
   long getValidity() {
     return validity;
   }

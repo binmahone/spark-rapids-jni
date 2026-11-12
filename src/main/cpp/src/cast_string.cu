@@ -18,6 +18,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
@@ -168,7 +169,7 @@ template <typename T>
 CUDF_KERNEL void string_to_integer_kernel(T* out,
                                           bitmask_type* validity,
                                           char const* const chars,
-                                          size_type const* offsets,
+                                          cudf::detail::input_offsetalator offsets,
                                           bitmask_type const* incoming_null_mask,
                                           size_type num_rows,
                                           bool ansi_mode,
@@ -399,7 +400,7 @@ template <typename T>
 CUDF_KERNEL void string_to_decimal_kernel(T* out,
                                           bitmask_type* validity,
                                           char const* const chars,
-                                          size_type const* offsets,
+                                          cudf::detail::input_offsetalator offsets,
                                           bitmask_type const* incoming_null_mask,
                                           size_type num_rows,
                                           int32_t scale,
@@ -623,13 +624,25 @@ void validate_ansi_column(column_view const& col,
                       thrust::make_counting_iterator(col.size()),
                       row_valid_fn{col.null_mask(), source_col.null_mask()});
 
-    size_type string_bounds[2];
-    cudaMemcpyAsync(&string_bounds,
-                    &source_col.offsets().data<size_type>()[*first_error],
-                    sizeof(size_type) * 2,
-                    cudaMemcpyDefault,
-                    stream.get());
-    stream.sync();
+    int64_t string_bounds[2];
+    if (source_col.offsets().type().id() == type_id::INT64) {
+      cudaMemcpyAsync(string_bounds,
+                      &source_col.offsets().data<int64_t>()[*first_error],
+                      sizeof(int64_t) * 2,
+                      cudaMemcpyDefault,
+                      stream.get());
+      stream.sync();
+    } else {
+      size_type narrow_bounds[2];
+      cudaMemcpyAsync(narrow_bounds,
+                      &source_col.offsets().data<size_type>()[*first_error],
+                      sizeof(size_type) * 2,
+                      cudaMemcpyDefault,
+                      stream.get());
+      stream.sync();
+      string_bounds[0] = narrow_bounds[0];
+      string_bounds[1] = narrow_bounds[1];
+    }
 
     std::string dest;
     dest.resize(string_bounds[1] - string_bounds[0]);
@@ -679,7 +692,7 @@ struct string_to_integer_impl {
       data.data(),
       null_mask.data(),
       string_col.chars_begin(stream),
-      string_col.offsets().data<size_type>(),
+      cudf::detail::offsetalator_factory::make_input_iterator(string_col.offsets()),
       string_col.null_mask(),
       string_col.size(),
       ansi_mode,
@@ -748,7 +761,7 @@ struct string_to_decimal_impl {
       data.data(),
       null_mask.data(),
       string_col.chars_begin(stream),
-      string_col.offsets().data<size_type>(),
+      cudf::detail::offsetalator_factory::make_input_iterator(string_col.offsets()),
       string_col.null_mask(),
       string_col.size(),
       dtype.scale(),

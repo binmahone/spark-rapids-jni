@@ -54,10 +54,31 @@ public class KudoGpuSerializer {
   }
 
   public static DeviceMemoryBuffer[] splitAndSerializeToDevice(Table table, int... splits) {
+    boolean extended = table.getDeviceMemorySize() > Integer.MAX_VALUE;
+    for (int i = 0; i < table.getNumberOfColumns(); i++) {
+      extended |= hasWideStrings(table.getColumn(i));
+    }
+    return splitAndSerializeToDevice(table, extended, splits);
+  }
+
+  private static boolean hasWideStrings(ColumnView column) {
+    if (column.getType() == DType.STRING) {
+      return column.getOffsetsType() == DType.INT64;
+    }
+    for (int i = 0; i < column.getNumChildren(); i++) {
+      try (ColumnView child = column.getChildColumnView(i)) {
+        if (hasWideStrings(child)) return true;
+      }
+    }
+    return false;
+  }
+
+  public static DeviceMemoryBuffer[] splitAndSerializeToDevice(
+      Table table, boolean extendedFormat, int... splits) {
     DeviceMemoryBuffer[] ret = new DeviceMemoryBuffer[2];
     boolean success = false;
     try {
-      long[] values = splitAndSerializeToDevice(table.getNativeView(), splits);
+      long[] values = splitAndSerializeToDevice(table.getNativeView(), extendedFormat, splits);
       ret[0] = DeviceMemoryBuffer.fromRmm(values[0], values[1], values[2]);
       ret[1] = DeviceMemoryBuffer.fromRmm(values[3], values[4], values[5]);
       success = true;
@@ -77,12 +98,22 @@ public class KudoGpuSerializer {
   public static Table assembleFromDeviceRaw(Schema schema,
                                             DeviceMemoryBuffer partitions,
                                             DeviceMemoryBuffer offsets) {
+    return assemble(schema, partitions, offsets, -1);
+  }
+
+  public static Table assembleFromDeviceRaw(Schema schema, DeviceMemoryBuffer partitions,
+                                            DeviceMemoryBuffer offsets, boolean extendedFormat) {
+    return assemble(schema, partitions, offsets, extendedFormat ? 1 : 0);
+  }
+
+  private static Table assemble(Schema schema, DeviceMemoryBuffer partitions,
+                                DeviceMemoryBuffer offsets, int formatMode) {
     AssembleResult result = assembleFromDeviceRawNative(
         partitions.getAddress(), partitions.getLength(),
         offsets.getAddress(), offsets.getLength(),
         schema.getFlattenedNumChildren(),
         schema.getFlattenedTypeIds(),
-        schema.getFlattenedTypeScales());
+        schema.getFlattenedTypeScales(), formatMode);
 
     DeviceMemoryBuffer singleBuffer = DeviceMemoryBuffer.fromRmm(
         result.getBufferAddress(), result.getBufferSize(), result.getBufferHandle());
@@ -119,13 +150,15 @@ public class KudoGpuSerializer {
    * (address, length, rmmAddress) The first tuple holds all the serialized data. The second tuple holds
    * size_t offsets into the first to show where the splits are.
    */
-  private static native long[] splitAndSerializeToDevice(long tableNativeView, int[] splits);
+  private static native long[] splitAndSerializeToDevice(
+      long tableNativeView, boolean extendedFormat, int[] splits);
 
 
   private static native AssembleResult assembleFromDeviceRawNative(long partAddr, long partLen,
                                                                    long offsetAddr, long offsetLen,
                                                                    int[] flattenedNumChildren,
                                                                    int[] flattenedTypeIds,
-                                                                   int[] flattenedTypeScales);
+                                                                   int[] flattenedTypeScales,
+                                                                   int formatMode);
 
 }

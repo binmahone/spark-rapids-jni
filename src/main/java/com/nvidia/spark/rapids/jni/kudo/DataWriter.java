@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,17 @@ public interface DataWriter {
    * Write int in network byte order.
    */
   void writeInt(int i) throws IOException;
+
+  /** Writes a long in network byte order. */
+  default void writeLong(long value) throws IOException {
+    writeInt((int) (value >>> 32));
+    writeInt((int) value);
+  }
+
+  /** Reserves space when the writer supports a contiguous Java buffer. */
+  default void reserve(long size) throws IOException {
+    if (size <= Integer.MAX_VALUE) reserve(Math.toIntExact(size));
+  }
 
   /**
    * Reserve space in the buffer for the given size.

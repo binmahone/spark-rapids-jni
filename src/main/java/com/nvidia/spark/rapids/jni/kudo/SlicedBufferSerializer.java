@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -200,13 +200,12 @@ class SlicedBufferSerializer implements HostColumnsVisitor {
       // Don't copy anything, there are no rows
       return 0;
     }
-    long bytesToCopy = (sliceInfo.rowCount + 1) * Integer.BYTES;
-    long srcOffset = sliceInfo.offset * Integer.BYTES;
+    long bytesToCopy = (sliceInfo.rowCount + 1L) * column.getOffsetsType().getSizeInBytes();
+    long srcOffset = (long) sliceInfo.offset * column.getOffsetsType().getSizeInBytes();
 
     if (KUDO_SANITY_CHECK) {
-      int startOffset = column.getOffsets().getInt(srcOffset);
-      int endOffset = column.getOffsets()
-          .getInt((sliceInfo.offset + sliceInfo.rowCount) * Integer.BYTES);
+      long startOffset = StringOffsets.read(column, sliceInfo.offset);
+      long endOffset = StringOffsets.read(column, (long) sliceInfo.offset + sliceInfo.rowCount);
 
       if (startOffset < 0 || endOffset < startOffset) {
         throw new IllegalArgumentException("Invalid kudo offset: " + startOffset + ", " + endOffset);
@@ -220,9 +219,8 @@ class SlicedBufferSerializer implements HostColumnsVisitor {
     if (sliceInfo.rowCount > 0) {
       DType type = column.getType();
       if (type.equals(DType.STRING)) {
-        long startByteOffset = column.getOffsets().getInt(sliceInfo.offset * Integer.BYTES);
-        long endByteOffset =
-            column.getOffsets().getInt((sliceInfo.offset + sliceInfo.rowCount) * Integer.BYTES);
+        long startByteOffset = StringOffsets.read(column, sliceInfo.offset);
+        long endByteOffset = StringOffsets.read(column, (long) sliceInfo.offset + sliceInfo.rowCount);
         long bytesToCopy = endByteOffset - startByteOffset;
         if (column.getData() == null) {
           if (bytesToCopy != 0) {
